@@ -1,0 +1,116 @@
+import { useState, useEffect } from "react";
+import axios from "axios";
+import { toast, ToastContainer } from "react-toastify";
+import "react-toastify/dist/ReactToastify.css";
+
+export default function ServerManager() {
+  const [servers, setServers] = useState([]);
+  const [newServer, setNewServer] = useState({ ip: "", username: "", port: "22" });
+
+  const loadServers = async () => {
+    try {
+      const res = await axios.get("/api/servers");
+      setServers(res.data);
+    } catch {
+      toast.error("Failed to load servers.");
+    }
+  };
+
+  useEffect(() => {
+    loadServers();
+  }, []);
+
+  const handleAdd = async (e) => {
+    e.preventDefault();
+    try {
+      await axios.post("/api/servers", newServer);
+      toast.success("Server added!");
+      setNewServer({ ip: "", username: "", port: "22" });
+      loadServers();
+    } catch (err) {
+      toast.error("Failed to add server: " + err.message);
+    }
+  };
+
+  const handleDelete = async (id) => {
+    if (window.confirm("Delete this server?")) {
+      await axios.delete(`/api/servers/${id}`);
+      toast.success("Deleted successfully");
+      loadServers();
+    }
+  };
+
+  return (
+    <>
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          padding: "20px",
+        }}
+      >
+        <h2>Server Manager</h2>
+
+        {/* Add new server form */}
+        <form
+          onSubmit={handleAdd}
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: "10px",
+            width: "300px",
+            marginBottom: "20px",
+          }}
+        >
+          <input
+            type="text"
+            placeholder="IP Address"
+            value={newServer.ip}
+            onChange={(e) => setNewServer({ ...newServer, ip: e.target.value })}
+            required
+          />
+          <input
+            type="text"
+            placeholder="Username"
+            value={newServer.username}
+            onChange={(e) => setNewServer({ ...newServer, username: e.target.value })}
+            required
+          />
+          <input
+            type="number"
+            placeholder="Port (default 22)"
+            value={newServer.port}
+            onChange={(e) => setNewServer({ ...newServer, port: e.target.value })}
+          />
+          <button type="submit">Add Server</button>
+        </form>
+
+        {/* Server list */}
+        <table border="1" cellPadding="8" style={{ borderCollapse: "collapse" }}>
+          <thead>
+            <tr>
+              <th>IP</th>
+              <th>Username</th>
+              <th>Port</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {servers.map((s) => (
+              <tr key={s.id}>
+                <td>{s.ip}</td>
+                <td>{s.username}</td>
+                <td>{s.port}</td>
+                <td>
+                  <button onClick={() => handleDelete(s.id)}>❌ Delete</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <ToastContainer />
+      </div>
+    </>
+  );
+}
