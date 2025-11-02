@@ -1,0 +1,125 @@
+import { useState } from "react";
+import axios from "axios";
+import { toast, ToastContainer } from "react-toastify";
+import "react-toastify/dist/ReactToastify.css";
+
+export default function DownloadPage() {
+  const [form, setForm] = useState({
+    ip: "",
+    port: "",
+    username: "appuser",
+    sourcePath: "",
+    fileName: "",
+  });
+
+  const handleChange = (e) => setForm({ ...form, [e.target.name]: e.target.value });
+
+  const handleDownload = async (e) => {
+    e.preventDefault();
+    const { ip, port, username, sourcePath, fileName } = form;
+
+    if (!ip || !sourcePath || !fileName) {
+      toast.error("All fields except port are required!");
+      return;
+    }
+
+    try {
+      // Step 1: Pull from remote → Server A
+      const params = new URLSearchParams({
+        ip,
+        username,
+        sourcePath,
+        fileName,
+        port: port || "22",
+      });
+
+      await axios.post(`/api/sftp/download?${params.toString()}`);
+
+      // Step 2: Download from Server A → browser
+      const response = await axios.get(`/api/local/download/${fileName}`, {
+        responseType: "blob",
+      });
+
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement("a");
+      link.href = url;
+      link.setAttribute("download", fileName);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+
+      toast.success("✅ File downloaded successfully!");
+    } catch (err) {
+      toast.error(`❌ Download failed: ${err.response?.data?.message || err.message}`);
+    }
+  };
+
+  return (
+    <>
+      <div
+        className="page"
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          justifyContent: "center",
+          alignItems: "center",
+          height: "calc(80vh - 60px)",
+          padding: "20px",
+        }}
+      >
+        <h2>Download File from Remote Server</h2>
+        <form
+          onSubmit={handleDownload}
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: "10px",
+            width: "300px",
+          }}
+        >
+          <input
+            type="text"
+            name="ip"
+            placeholder="IP Address"
+            value={form.ip}
+            onChange={handleChange}
+            required
+          />
+          <input
+            type="text"
+            name="port"
+            placeholder="Port (optional, default 22)"
+            value={form.port}
+            onChange={handleChange}
+          />
+          <input
+            type="text"
+            name="username"
+            placeholder="Username"
+            value={form.username}
+            onChange={handleChange}
+            required
+          />
+          <input
+            type="text"
+            name="sourcePath"
+            placeholder="Remote File Path"
+            value={form.sourcePath}
+            onChange={handleChange}
+            required
+          />
+          <input
+            type="text"
+            name="fileName"
+            placeholder="File Name"
+            value={form.fileName}
+            onChange={handleChange}
+            required
+          />
+          <button type="submit">Download</button>
+        </form>
+        <ToastContainer />
+      </div>
+    </>
+  );
+}
