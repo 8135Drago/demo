@@ -11,6 +11,7 @@ export default function DownloadPage() {
     username: "",
     port: 22,
     remotePath: "",
+    fileName: "",
   });
 
   useEffect(() => {
@@ -29,98 +30,93 @@ export default function DownloadPage() {
   const handleServerChange = (e) => {
     const ip = e.target.value;
     setSelectedServer(ip);
-    const server = servers.find((s) => s.ip === ip);
-    if (server) {
-      setFormData({
-        ...formData,
-        ip: server.ip,
-        username: server.username,
-        port: server.port,
-      });
-    }
+    const s = servers.find((srv) => srv.ip === ip);
+    if (s) setFormData({ ...formData, ip: s.ip, username: s.username, port: s.port });
   };
 
   const handleDownload = async (e) => {
     e.preventDefault();
-
-    if (!formData.remotePath) {
-      toast.error("Please enter a remote file path.");
+    if (!formData.remotePath || !formData.fileName) {
+      toast.error("Enter both remote path and file name.");
       return;
     }
 
     try {
-      const res = await api.post("/download", formData, {
-        responseType: "blob",
-      });
+      // STEP 1: Trigger SFTP pull
+      const sftpRes = await api.post("/sftp/download", formData);
+      const tempName = sftpRes.data.tempName;
 
-      // Download file locally
+      // STEP 2: Download from Server A
+      const res = await api.get(`/local/download/${tempName}`, { responseType: "blob" });
       const blob = new Blob([res.data]);
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = formData.remotePath.split("/").pop();
-      document.body.appendChild(a);
+      a.download = formData.fileName;
       a.click();
       a.remove();
+
       toast.success("File downloaded successfully!");
     } catch (err) {
-      toast.error("Download failed: " + err.message);
+      toast.error("Download failed: " + (err.response?.data?.message || err.message));
     }
   };
 
   return (
-    <div style={styles.container}>
-      <h2>File Download</h2>
+    <>
+      <div
+        className="page"
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          justifyContent: "center",
+          alignItems: "center",
+          height: "calc(50vh - 60px)",
+          padding: "20px",
+        }}
+      >
+        <h2>Download File</h2>
+        <form
+          onSubmit={handleDownload}
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: "10px",
+            width: "300px",
+          }}
+        >
+          <select value={selectedServer} onChange={handleServerChange} required>
+            <option value="">Select Server</option>
+            {servers.map((s) => (
+              <option key={s.id} value={s.ip}>
+                {s.ip} ({s.username})
+              </option>
+            ))}
+          </select>
 
-      <form onSubmit={handleDownload} style={styles.form}>
-        <label>Server:</label>
-        <select value={selectedServer} onChange={handleServerChange} required>
-          <option value="">Select Server</option>
-          {servers.map((s) => (
-            <option key={s.id} value={s.ip}>
-              {s.ip} ({s.username})
-            </option>
-          ))}
-        </select>
+          <input type="text" value={formData.username} readOnly placeholder="Username" />
+          <input type="number" value={formData.port} readOnly placeholder="Port" />
 
-        <label>Username:</label>
-        <input type="text" value={formData.username} readOnly />
+          <input
+            type="text"
+            placeholder="Remote Path (e.g. /home/user/)"
+            value={formData.remotePath}
+            onChange={(e) => setFormData({ ...formData, remotePath: e.target.value })}
+            required
+          />
 
-        <label>Port:</label>
-        <input type="number" value={formData.port} readOnly />
+          <input
+            type="text"
+            placeholder="File Name"
+            value={formData.fileName}
+            onChange={(e) => setFormData({ ...formData, fileName: e.target.value })}
+            required
+          />
 
-        <label>Remote File Path:</label>
-        <input
-          type="text"
-          placeholder="/remote/directory/file.txt"
-          value={formData.remotePath}
-          onChange={(e) =>
-            setFormData({ ...formData, remotePath: e.target.value })
-          }
-          required
-        />
-
-        <button type="submit">Download File</button>
-      </form>
-
-      <ToastContainer />
-    </div>
+          <button type="submit">Download</button>
+        </form>
+        <ToastContainer />
+      </div>
+    </>
   );
 }
-
-const styles = {
-  container: {
-    padding: "20px",
-    maxWidth: "400px",
-    margin: "auto",
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-  },
-  form: {
-    display: "flex",
-    flexDirection: "column",
-    gap: "10px",
-    width: "100%",
-  },
-};

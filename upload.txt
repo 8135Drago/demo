@@ -11,6 +11,7 @@ export default function UploadPage() {
     username: "",
     port: 22,
     remotePath: "",
+    remoteName: "",
   });
   const [file, setFile] = useState(null);
 
@@ -22,7 +23,7 @@ export default function UploadPage() {
     try {
       const res = await api.get("/servers");
       setServers(res.data);
-    } catch (err) {
+    } catch {
       toast.error("Failed to load servers.");
     }
   };
@@ -30,20 +31,11 @@ export default function UploadPage() {
   const handleServerChange = (e) => {
     const ip = e.target.value;
     setSelectedServer(ip);
-    const server = servers.find((s) => s.ip === ip);
-    if (server) {
-      setFormData({
-        ...formData,
-        ip: server.ip,
-        username: server.username,
-        port: server.port,
-      });
-    }
+    const s = servers.find((srv) => srv.ip === ip);
+    if (s) setFormData({ ...formData, ip: s.ip, username: s.username, port: s.port });
   };
 
-  const handleFileChange = (e) => {
-    setFile(e.target.files[0]);
-  };
+  const handleFileChange = (e) => setFile(e.target.files[0]);
 
   const handleUpload = async (e) => {
     e.preventDefault();
@@ -52,81 +44,90 @@ export default function UploadPage() {
       return;
     }
 
-    const uploadData = new FormData();
-    uploadData.append("file", file);
-    uploadData.append("ip", formData.ip);
-    uploadData.append("username", formData.username);
-    uploadData.append("port", formData.port);
-    uploadData.append("remotePath", formData.remotePath);
-
     try {
-      await api.post("/upload", uploadData, {
+      // STEP 1: Upload to Server A (temporary)
+      const uploadData = new FormData();
+      uploadData.append("file", file);
+      const localRes = await api.post("/local/upload", uploadData, {
         headers: { "Content-Type": "multipart/form-data" },
       });
-      toast.success("File uploaded successfully!");
+
+      const tempName = localRes.data.tempName;
+
+      // STEP 2: Trigger SFTP transfer
+      const sftpPayload = {
+        ip: formData.ip,
+        username: formData.username,
+        port: formData.port,
+        destinationPath: formData.remotePath,
+        fileName: tempName,
+        remoteName: formData.remoteName || file.name,
+      };
+      await api.post("/sftp/upload", sftpPayload);
+
+      toast.success("File transferred successfully!");
       setFile(null);
-      setFormData({ ...formData, remotePath: "" });
+      setFormData({ ...formData, remotePath: "", remoteName: "" });
     } catch (err) {
-      toast.error("Upload failed: " + err.message);
+      toast.error("Upload failed: " + (err.response?.data?.message || err.message));
     }
   };
 
   return (
-    <div style={styles.container}>
-      <h2>File Upload</h2>
+    <>
+      <div
+        className="page"
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          justifyContent: "center",
+          alignItems: "center",
+          height: "calc(50vh - 60px)",
+          padding: "20px",
+        }}
+      >
+        <h2>Upload File</h2>
+        <form
+          onSubmit={handleUpload}
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: "10px",
+            width: "300px",
+          }}
+        >
+          <select value={selectedServer} onChange={handleServerChange} required>
+            <option value="">Select Server</option>
+            {servers.map((s) => (
+              <option key={s.id} value={s.ip}>
+                {s.ip} ({s.username})
+              </option>
+            ))}
+          </select>
 
-      <form onSubmit={handleUpload} style={styles.form}>
-        <label>Server:</label>
-        <select value={selectedServer} onChange={handleServerChange} required>
-          <option value="">Select Server</option>
-          {servers.map((s) => (
-            <option key={s.id} value={s.ip}>
-              {s.ip} ({s.username})
-            </option>
-          ))}
-        </select>
+          <input type="text" value={formData.username} readOnly placeholder="Username" />
+          <input type="number" value={formData.port} readOnly placeholder="Port" />
 
-        <label>Username:</label>
-        <input type="text" value={formData.username} readOnly />
+          <input
+            type="text"
+            placeholder="Destination Path (e.g. /home/user/)"
+            value={formData.remotePath}
+            onChange={(e) => setFormData({ ...formData, remotePath: e.target.value })}
+            required
+          />
 
-        <label>Port:</label>
-        <input type="number" value={formData.port} readOnly />
+          <input
+            type="text"
+            placeholder="Rename File (optional)"
+            value={formData.remoteName}
+            onChange={(e) => setFormData({ ...formData, remoteName: e.target.value })}
+          />
 
-        <label>Remote Path:</label>
-        <input
-          type="text"
-          placeholder="/remote/directory/"
-          value={formData.remotePath}
-          onChange={(e) =>
-            setFormData({ ...formData, remotePath: e.target.value })
-          }
-          required
-        />
-
-        <label>Choose File:</label>
-        <input type="file" onChange={handleFileChange} required />
-
-        <button type="submit">Upload File</button>
-      </form>
-
-      <ToastContainer />
-    </div>
+          <input type="file" onChange={handleFileChange} required />
+          <button type="submit">Upload</button>
+        </form>
+        <ToastContainer />
+      </div>
+    </>
   );
 }
-
-const styles = {
-  container: {
-    padding: "20px",
-    maxWidth: "400px",
-    margin: "auto",
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-  },
-  form: {
-    display: "flex",
-    flexDirection: "column",
-    gap: "10px",
-    width: "100%",
-  },
-};
