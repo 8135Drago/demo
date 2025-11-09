@@ -1,387 +1,249 @@
-import { useState, useEffect } from "react";
-import axios from "axios";
-import { toast, ToastContainer } from "react-toastify";
-import "react-toastify/dist/ReactToastify.css";
+import org.apache.poi.openxml4j.opc.OPCPackage;
+import org.apache.poi.ss.usermodel.DataFormatter;
+import org.apache.poi.xssf.eventusermodel.XSSFReader;
+import org.apache.poi.xssf.model.SharedStringsTable;
+import org.apache.poi.xssf.usermodel.XSSFRichTextString;
+import org.xml.sax.Attributes;
+import org.xml.sax.InputSource;
+import org.xml.sax.SAXException;
+import org.xml.sax.XMLReader;
+import org.xml.sax.helpers.DefaultHandler;
 
-export default function ServerManager() {
-  const [servers, setServers] = useState([]);
-  const [filtered, setFiltered] = useState([]);
-  const [newServer, setNewServer] = useState({ ip: "", username: "", port: "22", tag: "" });
-  const [editServer, setEditServer] = useState(null);
-  const [search, setSearch] = useState("");
-  const [currentPage, setCurrentPage] = useState(1);
-  const [role, setRole] = useState("admin"); // change to "user" to test restrictions
-  const [showModal, setShowModal] = useState(false);
+import javax.xml.parsers.SAXParser;
+import javax.xml.parsers.SAXParserFactory;
+import java.io.InputStream;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
-  const pageSize = 5;
-
-  const loadServers = async () => {
-    try {
-      const res = await axios.get("/api/servers");
-      setServers(res.data);
-      setFiltered(res.data);
-    } catch {
-      toast.error("Failed to load servers.");
+// POJO for ABC Sheet
+class ABCData {
+    private String column1;
+    private String column2;
+    private String column3;
+    // Add more fields as needed
+    
+    public ABCData(List<String> rowData) {
+        this.column1 = rowData.size() > 0 ? rowData.get(0) : "";
+        this.column2 = rowData.size() > 1 ? rowData.get(1) : "";
+        this.column3 = rowData.size() > 2 ? rowData.get(2) : "";
     }
-  };
-
-  useEffect(() => {
-    loadServers();
-  }, []);
-
-  const handleAdd = async (e) => {
-    e.preventDefault();
-    try {
-      await axios.post("/api/servers", newServer);
-      toast.success("Server added!");
-      setNewServer({ ip: "", username: "", port: "22", tag: "" });
-      loadServers();
-      setShowModal(false);
-    } catch (err) {
-      toast.error("Failed to add server: " + err.message);
+    
+    @Override
+    public String toString() {
+        return "ABCData{" +
+                "column1='" + column1 + '\'' +
+                ", column2='" + column2 + '\'' +
+                ", column3='" + column3 + '\'' +
+                '}';
     }
-  };
-
-  const handleDelete = async (id) => {
-    if (!window.confirm("Delete this server?")) return;
-    try {
-      await axios.delete(`/api/servers/${id}`);
-      toast.success("Deleted successfully");
-      loadServers();
-    } catch {
-      toast.error("Failed to delete server");
-    }
-  };
-
-  const handleEditSave = async () => {
-    try {
-      await axios.put(`/api/servers/${editServer.id}`, editServer);
-      toast.success("Server updated!");
-      setEditServer(null);
-      loadServers();
-    } catch {
-      toast.error("Failed to update server");
-    }
-  };
-
-  const handleSearch = (value) => {
-    setSearch(value);
-    if (!value) setFiltered(servers);
-    else {
-      setFiltered(
-        servers.filter(
-          (s) =>
-            s.ip.toLowerCase().includes(value.toLowerCase()) ||
-            s.username.toLowerCase().includes(value.toLowerCase()) ||
-            (s.tag && s.tag.toLowerCase().includes(value.toLowerCase()))
-        )
-      );
-    }
-  };
-
-  const paginated = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize);
-  const totalPages = Math.ceil(filtered.length / pageSize);
-
-  return (
-    <div style={styles.container}>
-      <h2 style={styles.title}>⚙️ Server Manager</h2>
-
-      {/* Top Bar */}
-      <div style={styles.topBar}>
-        <input
-          type="text"
-          placeholder="🔍 Search servers..."
-          value={search}
-          onChange={(e) => handleSearch(e.target.value)}
-          style={styles.searchInput}
-        />
-        <button style={styles.addButton} onClick={() => setShowModal(true)}>
-          ➕ Add Server
-        </button>
-      </div>
-
-      {/* Table */}
-      <div style={styles.tableWrapper}>
-        <table style={styles.table}>
-          <thead>
-            <tr style={styles.tableHeader}>
-              <th>IP</th>
-              <th>Username</th>
-              <th>Port</th>
-              <th>Tag</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {paginated.map((s) => (
-              <tr key={s.id} style={styles.tableRow}>
-                <td>{s.ip}</td>
-                <td>{s.username}</td>
-                <td>{s.port}</td>
-                <td>{s.tag || "-"}</td>
-                <td>
-                  <button style={styles.editBtn} onClick={() => setEditServer(s)}>
-                    ✏️
-                  </button>
-                  <button style={styles.delBtn} onClick={() => handleDelete(s.id)}>
-                    ❌
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      {/* Pagination */}
-      <div style={styles.pagination}>
-        {Array.from({ length: totalPages }, (_, i) => (
-          <button
-            key={i}
-            onClick={() => setCurrentPage(i + 1)}
-            style={{
-              ...styles.pageBtn,
-              background: currentPage === i + 1 ? "#d63031" : "#111",
-            }}
-          >
-            {i + 1}
-          </button>
-        ))}
-      </div>
-
-      {/* Add Server Modal */}
-      {showModal && (
-        <div style={styles.modalOverlay}>
-          <div style={styles.modalContent}>
-            <h3 style={{ color: "#fff" }}>Add New Server</h3>
-            <form onSubmit={handleAdd} style={styles.form}>
-              <input
-                type="text"
-                placeholder="IP Address"
-                value={newServer.ip}
-                onChange={(e) => setNewServer({ ...newServer, ip: e.target.value })}
-                required
-                style={styles.input}
-              />
-              <input
-                type="text"
-                placeholder="Username"
-                value={newServer.username}
-                onChange={(e) => setNewServer({ ...newServer, username: e.target.value })}
-                required
-                style={styles.input}
-              />
-              <input
-                type="number"
-                placeholder="Port"
-                value={newServer.port}
-                onChange={(e) => setNewServer({ ...newServer, port: e.target.value })}
-                style={styles.input}
-              />
-              {role === "admin" && (
-                <select
-                  style={styles.input}
-                  value={newServer.tag}
-                  onChange={(e) => setNewServer({ ...newServer, tag: e.target.value })}
-                >
-                  <option value="">Select Tag</option>
-                  <option value="SIT">SIT</option>
-                  <option value="UAT5">UAT5</option>
-                  <option value="UAT3">UAT3</option>
-                  <option value="UAT1">UAT1</option>
-                </select>
-              )}
-              <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <button type="submit" style={styles.modalBtnAdd}>
-                  Add
-                </button>
-                <button onClick={() => setShowModal(false)} style={styles.modalBtnCancel}>
-                  Cancel
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Edit Modal */}
-      {editServer && (
-        <div style={styles.modalOverlay}>
-          <div style={styles.modalContent}>
-            <h3 style={{ color: "#fff" }}>Edit Server</h3>
-            <input
-              type="text"
-              value={editServer.ip}
-              onChange={(e) => setEditServer({ ...editServer, ip: e.target.value })}
-              style={styles.input}
-            />
-            <input
-              type="text"
-              value={editServer.username}
-              onChange={(e) => setEditServer({ ...editServer, username: e.target.value })}
-              style={styles.input}
-            />
-            <input
-              type="number"
-              value={editServer.port}
-              onChange={(e) => setEditServer({ ...editServer, port: e.target.value })}
-              style={styles.input}
-            />
-            {role === "admin" && (
-              <select
-                style={styles.input}
-                value={editServer.tag}
-                onChange={(e) => setEditServer({ ...editServer, tag: e.target.value })}
-              >
-                <option value="">Select Tag</option>
-                <option value="SIT">SIT</option>
-                <option value="UAT5">UAT5</option>
-                <option value="UAT3">UAT3</option>
-                <option value="UAT1">UAT1</option>
-              </select>
-            )}
-            <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <button onClick={handleEditSave} style={styles.modalBtnAdd}>
-                Save
-              </button>
-              <button onClick={() => setEditServer(null)} style={styles.modalBtnCancel}>
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      <ToastContainer position="bottom-right" theme="dark" />
-    </div>
-  );
 }
 
-const styles = {
-  container: {
-    background: "#0d0d0d",
-    minHeight: "100vh",
-    color: "#fff",
-    padding: "30px",
-    fontFamily: "Segoe UI, sans-serif",
-  },
-  title: {
-    fontSize: "26px",
-    color: "#ff4d4d",
-    textAlign: "center",
-    marginBottom: "20px",
-  },
-  topBar: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: "20px",
-  },
-  searchInput: {
-    padding: "8px 12px",
-    borderRadius: "6px",
-    border: "1px solid #444",
-    background: "#1a1a1a",
-    color: "#fff",
-    width: "60%",
-  },
-  addButton: {
-    background: "#e74c3c",
-    color: "#fff",
-    border: "none",
-    borderRadius: "6px",
-    padding: "8px 14px",
-    cursor: "pointer",
-  },
-  tableWrapper: {
-    maxHeight: "400px",
-    overflowY: "auto",
-    border: "1px solid #333",
-    borderRadius: "8px",
-  },
-  table: {
-    width: "100%",
-    borderCollapse: "collapse",
-  },
-  tableHeader: {
-    background: "#1a1a1a",
-    color: "#ff4d4d",
-  },
-  tableRow: {
-    textAlign: "center",
-    borderBottom: "1px solid #333",
-  },
-  editBtn: {
-    background: "#3498db",
-    border: "none",
-    color: "#fff",
-    marginRight: "5px",
-    borderRadius: "4px",
-    cursor: "pointer",
-    padding: "4px 8px",
-  },
-  delBtn: {
-    background: "#e74c3c",
-    border: "none",
-    color: "#fff",
-    borderRadius: "4px",
-    cursor: "pointer",
-    padding: "4px 8px",
-  },
-  pagination: {
-    marginTop: "10px",
-    textAlign: "center",
-  },
-  pageBtn: {
-    margin: "2px",
-    padding: "5px 10px",
-    borderRadius: "5px",
-    color: "#fff",
-    border: "none",
-    cursor: "pointer",
-  },
-  modalOverlay: {
-    position: "fixed",
-    top: 0,
-    left: 0,
-    width: "100vw",
-    height: "100vh",
-    background: "rgba(0,0,0,0.85)",
-    display: "flex",
-    justifyContent: "center",
-    alignItems: "center",
-    zIndex: 1000,
-  },
-  modalContent: {
-    background: "#1a1a1a",
-    border: "1px solid #333",
-    borderRadius: "10px",
-    padding: "20px",
-    width: "300px",
-  },
-  input: {
-    background: "#111",
-    color: "#fff",
-    border: "1px solid #333",
-    padding: "8px",
-    borderRadius: "6px",
-    marginBottom: "10px",
-    width: "100%",
-  },
-  modalBtnAdd: {
-    background: "#27ae60",
-    color: "#fff",
-    border: "none",
-    padding: "6px 12px",
-    borderRadius: "6px",
-    cursor: "pointer",
-  },
-  modalBtnCancel: {
-    background: "#c0392b",
-    color: "#fff",
-    border: "none",
-    padding: "6px 12px",
-    borderRadius: "6px",
-    cursor: "pointer",
-  },
-};
+// POJO for XYZ Sheet
+class XYZData {
+    private String fieldA;
+    private String fieldB;
+    private String fieldC;
+    // Add more fields as needed
+    
+    public XYZData(List<String> rowData) {
+        this.fieldA = rowData.size() > 0 ? rowData.get(0) : "";
+        this.fieldB = rowData.size() > 1 ? rowData.get(1) : "";
+        this.fieldC = rowData.size() > 2 ? rowData.get(2) : "";
+    }
+    
+    @Override
+    public String toString() {
+        return "XYZData{" +
+                "fieldA='" + fieldA + '\'' +
+                ", fieldB='" + fieldB + '\'' +
+                ", fieldC='" + fieldC + '\'' +
+                '}';
+    }
+}
+
+// SAX Handler for parsing sheet data
+class SheetHandler extends DefaultHandler {
+    private SharedStringsTable sst;
+    private String lastContents;
+    private boolean nextIsString;
+    private List<String> currentRow = new ArrayList<>();
+    private List<List<String>> allRows = new ArrayList<>();
+    private boolean isFirstRow = true;
+    private DataFormatter formatter = new DataFormatter();
+    
+    public SheetHandler(SharedStringsTable sst) {
+        this.sst = sst;
+    }
+    
+    @Override
+    public void startElement(String uri, String localName, String name, Attributes attributes) {
+        if (name.equals("c")) { // Cell
+            String cellType = attributes.getValue("t");
+            nextIsString = cellType != null && cellType.equals("s");
+        }
+        lastContents = "";
+    }
+    
+    @Override
+    public void endElement(String uri, String localName, String name) {
+        if (nextIsString) {
+            try {
+                int idx = Integer.parseInt(lastContents);
+                lastContents = new XSSFRichTextString(sst.getEntryAt(idx)).toString();
+            } catch (Exception e) {
+                // Handle exception
+            }
+        }
+        
+        if (name.equals("v") || name.equals("t")) { // Value or text
+            currentRow.add(lastContents);
+        } else if (name.equals("row")) { // End of row
+            if (!isFirstRow) { // Skip header row if needed
+                allRows.add(new ArrayList<>(currentRow));
+            } else {
+                isFirstRow = false;
+            }
+            currentRow.clear();
+        }
+    }
+    
+    @Override
+    public void characters(char[] ch, int start, int length) {
+        lastContents += new String(ch, start, length);
+    }
+    
+    public List<List<String>> getRows() {
+        return allRows;
+    }
+}
+
+public class ExcelStreamingReader {
+    private static final int CHUNK_SIZE = 1000; // Adjust as needed
+    
+    public static void main(String[] args) {
+        String filePath = "path/to/your/large-file.xlsx";
+        
+        try {
+            processExcelFile(filePath);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+    
+    public static void processExcelFile(String filePath) throws Exception {
+        OPCPackage pkg = OPCPackage.open(filePath);
+        XSSFReader reader = new XSSFReader(pkg);
+        SharedStringsTable sst = reader.getSharedStringsTable();
+        
+        // Get sheet names and their IDs
+        Map<String, String> sheetMap = getSheetMap(reader);
+        
+        int abcCount = 0;
+        int xyzCount = 0;
+        
+        // Process ABC sheet
+        if (sheetMap.containsKey("ABC")) {
+            System.out.println("Processing ABC sheet...");
+            abcCount = processSheet(reader, sst, sheetMap.get("ABC"), "ABC");
+        } else {
+            System.out.println("ABC sheet not found!");
+        }
+        
+        // Process XYZ sheet
+        if (sheetMap.containsKey("XYZ")) {
+            System.out.println("\nProcessing XYZ sheet...");
+            xyzCount = processSheet(reader, sst, sheetMap.get("XYZ"), "XYZ");
+        } else {
+            System.out.println("XYZ sheet not found!");
+        }
+        
+        pkg.close();
+        
+        // Print final counts
+        System.out.println("\n=== Processing Complete ===");
+        System.out.println("ABC Sheet Total Rows: " + abcCount);
+        System.out.println("XYZ Sheet Total Rows: " + xyzCount);
+        System.out.println("Total Rows Processed: " + (abcCount + xyzCount));
+    }
+    
+    private static Map<String, String> getSheetMap(XSSFReader reader) throws Exception {
+        Map<String, String> sheetMap = new HashMap<>();
+        XSSFReader.SheetIterator iter = (XSSFReader.SheetIterator) reader.getSheetsData();
+        
+        while (iter.hasNext()) {
+            InputStream stream = iter.next();
+            String sheetName = iter.getSheetName();
+            sheetMap.put(sheetName, iter.getSheetPart().getPartName().getName());
+            stream.close();
+        }
+        
+        return sheetMap;
+    }
+    
+    private static int processSheet(XSSFReader reader, SharedStringsTable sst, 
+                                     String sheetId, String sheetName) throws Exception {
+        InputStream sheet = reader.getSheet(sheetId);
+        InputSource sheetSource = new InputSource(sheet);
+        
+        SAXParserFactory saxFactory = SAXParserFactory.newInstance();
+        SAXParser saxParser = saxFactory.newSAXParser();
+        XMLReader xmlReader = saxParser.getXMLReader();
+        
+        SheetHandler handler = new SheetHandler(sst);
+        xmlReader.setContentHandler(handler);
+        xmlReader.parse(sheetSource);
+        
+        List<List<String>> rows = handler.getRows();
+        sheet.close();
+        
+        // Process rows in chunks
+        int totalRows = rows.size();
+        int processedRows = 0;
+        
+        for (int i = 0; i < rows.size(); i += CHUNK_SIZE) {
+            int end = Math.min(i + CHUNK_SIZE, rows.size());
+            List<List<String>> chunk = rows.subList(i, end);
+            
+            if (sheetName.equals("ABC")) {
+                List<ABCData> abcList = new ArrayList<>();
+                for (List<String> row : chunk) {
+                    abcList.add(new ABCData(row));
+                }
+                processABCData(abcList);
+                processedRows += abcList.size();
+            } else if (sheetName.equals("XYZ")) {
+                List<XYZData> xyzList = new ArrayList<>();
+                for (List<String> row : chunk) {
+                    xyzList.add(new XYZData(row));
+                }
+                processXYZData(xyzList);
+                processedRows += xyzList.size();
+            }
+            
+            System.out.println("Processed " + processedRows + "/" + totalRows + " rows from " + sheetName);
+        }
+        
+        return totalRows;
+    }
+    
+    // Function to process ABC data chunks
+    private static void processABCData(List<ABCData> dataList) {
+        System.out.println("\n--- Processing ABC Chunk (" + dataList.size() + " records) ---");
+        for (ABCData data : dataList) {
+            System.out.println(data);
+        }
+    }
+    
+    // Function to process XYZ data chunks
+    private static void processXYZData(List<XYZData> dataList) {
+        System.out.println("\n--- Processing XYZ Chunk (" + dataList.size() + " records) ---");
+        for (XYZData data : dataList.size() > 5 ? dataList.subList(0, 5) : dataList) {
+            System.out.println(data);
+        }
+        if (dataList.size() > 5) {
+            System.out.println("... (" + (dataList.size() - 5) + " more records)");
+        }
+    }
+}
