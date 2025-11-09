@@ -3,64 +3,63 @@ import org.apache.poi.xssf.eventusermodel.XSSFReader;
 import org.apache.poi.xssf.model.SharedStringsTable;
 import org.xml.sax.Attributes;
 import org.xml.sax.InputSource;
-import org.xml.sax.SAXException;
 import org.xml.sax.XMLReader;
 import org.xml.sax.helpers.DefaultHandler;
 
 import javax.xml.parsers.SAXParser;
 import javax.xml.parsers.SAXParserFactory;
 import java.io.InputStream;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.List;
 
-// Configuration class for column extraction
-class ColumnConfig {
-    private String columnName;
-    private int columnIndex;
+class ABCData {
+    private String field1;
+    private String field2;
+    private String field3;
+    private String field4;
+    private String field5;
     
-    public ColumnConfig(String columnName, int columnIndex) {
-        this.columnName = columnName;
-        this.columnIndex = columnIndex;
+    public ABCData(String field1, String field2, String field3, String field4, String field5) {
+        this.field1 = field1;
+        this.field2 = field2;
+        this.field3 = field3;
+        this.field4 = field4;
+        this.field5 = field5;
     }
     
-    public String getColumnName() {
-        return columnName;
-    }
-    
-    public int getColumnIndex() {
-        return columnIndex;
-    }
+    public String getField1() { return field1; }
+    public String getField2() { return field2; }
+    public String getField3() { return field3; }
+    public String getField4() { return field4; }
+    public String getField5() { return field5; }
 }
 
-// SAX Handler for extracting specific columns
-class ColumnExtractionHandler extends DefaultHandler {
+class ABCSheetHandler extends DefaultHandler {
     private SharedStringsTable sst;
     private String lastContents;
     private boolean nextIsString;
-    private int currentCol = 0;
-    private Map<String, List<String>> columnData;
-    private Map<Integer, String> columnIndexToName;
+    private List<String> currentRow = new ArrayList<>();
+    private List<ABCData> currentChunk = new ArrayList<>();
     private boolean isFirstRow = true;
     private String currentCellRef;
+    private int currentCol = 0;
+    private int chunkSize;
+    private int totalRowsProcessed = 0;
+    private String additionalParam;
+    private TestProcess testProcess;
     
-    public ColumnExtractionHandler(SharedStringsTable sst, List<ColumnConfig> configs) {
+    public ABCSheetHandler(SharedStringsTable sst, int chunkSize, String additionalParam, TestProcess testProcess) {
         this.sst = sst;
-        this.columnData = new HashMap<>();
-        this.columnIndexToName = new HashMap<>();
-        
-        // Initialize the map structure
-        for (ColumnConfig config : configs) {
-            columnData.put(config.getColumnName(), new ArrayList<>());
-            columnIndexToName.put(config.getColumnIndex(), config.getColumnName());
-        }
+        this.chunkSize = chunkSize;
+        this.additionalParam = additionalParam;
+        this.testProcess = testProcess;
     }
     
     @Override
     public void startElement(String uri, String localName, String name, Attributes attributes) {
-        if (name.equals("c")) { // Cell
+        if (name.equals("c")) {
             String cellType = attributes.getValue("t");
             nextIsString = cellType != null && cellType.equals("s");
-            
-            // Get cell reference (e.g., "A1", "F2")
             currentCellRef = attributes.getValue("r");
             if (currentCellRef != null) {
                 currentCol = getColumnIndex(currentCellRef);
@@ -80,16 +79,25 @@ class ColumnExtractionHandler extends DefaultHandler {
             }
         }
         
-        if (name.equals("v") || name.equals("t")) { // Value or text
-            // Only store if this column is in our config
-            if (!isFirstRow && columnIndexToName.containsKey(currentCol)) {
-                String columnName = columnIndexToName.get(currentCol);
-                columnData.get(columnName).add(lastContents);
+        if (name.equals("v") || name.equals("t")) {
+            while (currentRow.size() < currentCol) {
+                currentRow.add("");
             }
-        } else if (name.equals("row")) { // End of row
+            currentRow.add(lastContents);
+        } else if (name.equals("row")) {
             if (isFirstRow) {
                 isFirstRow = false;
+            } else if (!currentRow.isEmpty()) {
+                ABCData data = createABCData(currentRow);
+                currentChunk.add(data);
+                totalRowsProcessed++;
+                
+                if (currentChunk.size() >= chunkSize) {
+                    testProcess.test(new ArrayList<>(currentChunk), additionalParam);
+                    currentChunk.clear();
+                }
             }
+            currentRow.clear();
             currentCol = 0;
         }
     }
@@ -99,7 +107,6 @@ class ColumnExtractionHandler extends DefaultHandler {
         lastContents += new String(ch, start, length);
     }
     
-    // Convert cell reference to column index (A=0, B=1, ..., Z=25, AA=26, etc.)
     private int getColumnIndex(String cellRef) {
         StringBuilder colString = new StringBuilder();
         for (char c : cellRef.toCharArray()) {
@@ -109,161 +116,80 @@ class ColumnExtractionHandler extends DefaultHandler {
                 break;
             }
         }
-        
         int index = 0;
         for (int i = 0; i < colString.length(); i++) {
             index = index * 26 + (colString.charAt(i) - 'A' + 1);
         }
-        return index - 1; // Convert to 0-based index
+        return index - 1;
     }
     
-    public Map<String, List<String>> getColumnData() {
-        return columnData;
+    private ABCData createABCData(List<String> row) {
+        String f1 = row.size() > 0 ? row.get(0) : "";
+        String f2 = row.size() > 1 ? row.get(1) : "";
+        String f3 = row.size() > 2 ? row.get(2) : "";
+        String f4 = row.size() > 3 ? row.get(3) : "";
+        String f5 = row.size() > 4 ? row.get(4) : "";
+        return new ABCData(f1, f2, f3, f4, f5);
+    }
+    
+    public void processRemainingChunk() {
+        if (!currentChunk.isEmpty()) {
+            testProcess.test(new ArrayList<>(currentChunk), additionalParam);
+            currentChunk.clear();
+        }
+    }
+    
+    public int getTotalRowsProcessed() {
+        return totalRowsProcessed;
     }
 }
 
-public class ExcelColumnExtractor {
+interface TestProcess {
+    void test(List<ABCData> dataList, String param);
+}
+
+public class ExcelABCReader {
     
-    /**
-     * Extract specific columns from an Excel sheet
-     * 
-     * @param filePath Path to the Excel file
-     * @param sheetName Name of the sheet to read
-     * @param columnConfigs List of column configurations (name and index)
-     * @return Map where key is column name and value is list of values from that column
-     */
-    public static Map<String, List<String>> extractColumns(
-            String filePath, 
-            String sheetName, 
-            List<ColumnConfig> columnConfigs) throws Exception {
+    public static int readAndProcess(String filePath, String sheetName, int chunkSize, 
+                                      String additionalParam, TestProcess testProcess) throws Exception {
         
         OPCPackage pkg = OPCPackage.open(filePath);
         XSSFReader reader = new XSSFReader(pkg);
         SharedStringsTable sst = reader.getSharedStringsTable();
         
-        // Find the sheet
-        String sheetId = findSheet(reader, sheetName);
-        if (sheetId == null) {
+        InputStream sheetStream = findSheetStream(reader, sheetName);
+        if (sheetStream == null) {
             pkg.close();
             throw new IllegalArgumentException("Sheet '" + sheetName + "' not found!");
         }
         
-        // Parse the sheet
-        InputStream sheet = reader.getSheet(sheetId);
-        InputSource sheetSource = new InputSource(sheet);
-        
+        InputSource sheetSource = new InputSource(sheetStream);
         SAXParserFactory saxFactory = SAXParserFactory.newInstance();
         SAXParser saxParser = saxFactory.newSAXParser();
         XMLReader xmlReader = saxParser.getXMLReader();
         
-        ColumnExtractionHandler handler = new ColumnExtractionHandler(sst, columnConfigs);
+        ABCSheetHandler handler = new ABCSheetHandler(sst, chunkSize, additionalParam, testProcess);
         xmlReader.setContentHandler(handler);
         xmlReader.parse(sheetSource);
         
-        sheet.close();
+        handler.processRemainingChunk();
+        
+        sheetStream.close();
         pkg.close();
         
-        return handler.getColumnData();
+        return handler.getTotalRowsProcessed();
     }
     
-    /**
-     * Convenience method for extracting two columns (like key1 and key2)
-     */
-    public static Map<String, List<String>> extractTwoColumns(
-            String filePath,
-            String sheetName,
-            String column1Name,
-            int column1Index,
-            String column2Name,
-            int column2Index) throws Exception {
-        
-        List<ColumnConfig> configs = Arrays.asList(
-            new ColumnConfig(column1Name, column1Index),
-            new ColumnConfig(column2Name, column2Index)
-        );
-        
-        return extractColumns(filePath, sheetName, configs);
-    }
-    
-    private static String findSheet(XSSFReader reader, String sheetName) throws Exception {
+    private static InputStream findSheetStream(XSSFReader reader, String sheetName) throws Exception {
         XSSFReader.SheetIterator iter = (XSSFReader.SheetIterator) reader.getSheetsData();
-        
         while (iter.hasNext()) {
             InputStream stream = iter.next();
             String name = iter.getSheetName();
-            String partName = iter.getSheetPart().getPartName().getName();
-            stream.close();
-            
             if (name.equals(sheetName)) {
-                return partName;
+                return stream;
             }
+            stream.close();
         }
-        
         return null;
-    }
-    
-    // Example usage
-    public static void main(String[] args) {
-        try {
-            String filePath = "path/to/your/file.xlsx";
-            String sheetName = "ABC";
-            
-            // Example 1: Extract 2 columns (key1 at column 0, key2 at column 5)
-            System.out.println("=== Example 1: Extract 2 columns ===");
-            Map<String, List<String>> result = extractTwoColumns(
-                filePath, 
-                sheetName, 
-                "key1", 0,  // Column A (index 0)
-                "key2", 5   // Column F (index 5)
-            );
-            
-            System.out.println("key1 count: " + result.get("key1").size());
-            System.out.println("key2 count: " + result.get("key2").size());
-            System.out.println("\nFirst 5 values of key1:");
-            result.get("key1").stream().limit(5).forEach(System.out::println);
-            System.out.println("\nFirst 5 values of key2:");
-            result.get("key2").stream().limit(5).forEach(System.out::println);
-            
-            // Example 2: Extract multiple columns (flexible approach)
-            System.out.println("\n\n=== Example 2: Extract multiple columns ===");
-            List<ColumnConfig> configs = Arrays.asList(
-                new ColumnConfig("key1", 0),   // Column A
-                new ColumnConfig("key2", 5),   // Column F
-                new ColumnConfig("key3", 10),  // Column K
-                new ColumnConfig("key4", 15)   // Column P
-            );
-            
-            Map<String, List<String>> multiResult = extractColumns(
-                filePath, 
-                sheetName, 
-                configs
-            );
-            
-            System.out.println("Extracted columns:");
-            for (String key : multiResult.keySet()) {
-                System.out.println(key + ": " + multiResult.get(key).size() + " values");
-            }
-            
-            // Example 3: Process the data
-            System.out.println("\n\n=== Example 3: Processing the data ===");
-            processData(result);
-            
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-    }
-    
-    // Example processing function
-    private static void processData(Map<String, List<String>> data) {
-        List<String> key1Values = data.get("key1");
-        List<String> key2Values = data.get("key2");
-        
-        System.out.println("Processing " + key1Values.size() + " rows...");
-        
-        // You can now work with the lists as needed
-        for (int i = 0; i < Math.min(5, key1Values.size()); i++) {
-            System.out.println("Row " + (i+1) + ": key1=" + key1Values.get(i) + 
-                             ", key2=" + key2Values.get(i));
-        }
     }
 }
