@@ -1,8 +1,6 @@
 import org.apache.poi.openxml4j.opc.OPCPackage;
-import org.apache.poi.ss.usermodel.DataFormatter;
 import org.apache.poi.xssf.eventusermodel.XSSFReader;
 import org.apache.poi.xssf.model.SharedStringsTable;
-import org.apache.poi.xssf.usermodel.XSSFRichTextString;
 import org.xml.sax.Attributes;
 import org.xml.sax.InputSource;
 import org.xml.sax.SAXException;
@@ -12,69 +10,48 @@ import org.xml.sax.helpers.DefaultHandler;
 import javax.xml.parsers.SAXParser;
 import javax.xml.parsers.SAXParserFactory;
 import java.io.InputStream;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
-// POJO for ABC Sheet
-class ABCData {
-    private String column1;
-    private String column2;
-    private String column3;
-    // Add more fields as needed
+// Configuration class for column extraction
+class ColumnConfig {
+    private String columnName;
+    private int columnIndex;
     
-    public ABCData(List<String> rowData) {
-        this.column1 = rowData.size() > 0 ? rowData.get(0) : "";
-        this.column2 = rowData.size() > 1 ? rowData.get(1) : "";
-        this.column3 = rowData.size() > 2 ? rowData.get(2) : "";
+    public ColumnConfig(String columnName, int columnIndex) {
+        this.columnName = columnName;
+        this.columnIndex = columnIndex;
     }
     
-    @Override
-    public String toString() {
-        return "ABCData{" +
-                "column1='" + column1 + '\'' +
-                ", column2='" + column2 + '\'' +
-                ", column3='" + column3 + '\'' +
-                '}';
+    public String getColumnName() {
+        return columnName;
+    }
+    
+    public int getColumnIndex() {
+        return columnIndex;
     }
 }
 
-// POJO for XYZ Sheet
-class XYZData {
-    private String fieldA;
-    private String fieldB;
-    private String fieldC;
-    // Add more fields as needed
-    
-    public XYZData(List<String> rowData) {
-        this.fieldA = rowData.size() > 0 ? rowData.get(0) : "";
-        this.fieldB = rowData.size() > 1 ? rowData.get(1) : "";
-        this.fieldC = rowData.size() > 2 ? rowData.get(2) : "";
-    }
-    
-    @Override
-    public String toString() {
-        return "XYZData{" +
-                "fieldA='" + fieldA + '\'' +
-                ", fieldB='" + fieldB + '\'' +
-                ", fieldC='" + fieldC + '\'' +
-                '}';
-    }
-}
-
-// SAX Handler for parsing sheet data
-class SheetHandler extends DefaultHandler {
+// SAX Handler for extracting specific columns
+class ColumnExtractionHandler extends DefaultHandler {
     private SharedStringsTable sst;
     private String lastContents;
     private boolean nextIsString;
-    private List<String> currentRow = new ArrayList<>();
-    private List<List<String>> allRows = new ArrayList<>();
+    private int currentCol = 0;
+    private Map<String, List<String>> columnData;
+    private Map<Integer, String> columnIndexToName;
     private boolean isFirstRow = true;
-    private DataFormatter formatter = new DataFormatter();
+    private String currentCellRef;
     
-    public SheetHandler(SharedStringsTable sst) {
+    public ColumnExtractionHandler(SharedStringsTable sst, List<ColumnConfig> configs) {
         this.sst = sst;
+        this.columnData = new HashMap<>();
+        this.columnIndexToName = new HashMap<>();
+        
+        // Initialize the map structure
+        for (ColumnConfig config : configs) {
+            columnData.put(config.getColumnName(), new ArrayList<>());
+            columnIndexToName.put(config.getColumnIndex(), config.getColumnName());
+        }
     }
     
     @Override
@@ -82,6 +59,12 @@ class SheetHandler extends DefaultHandler {
         if (name.equals("c")) { // Cell
             String cellType = attributes.getValue("t");
             nextIsString = cellType != null && cellType.equals("s");
+            
+            // Get cell reference (e.g., "A1", "F2")
+            currentCellRef = attributes.getValue("r");
+            if (currentCellRef != null) {
+                currentCol = getColumnIndex(currentCellRef);
+            }
         }
         lastContents = "";
     }
@@ -91,21 +74,23 @@ class SheetHandler extends DefaultHandler {
         if (nextIsString) {
             try {
                 int idx = Integer.parseInt(lastContents);
-                lastContents = new XSSFRichTextString(sst.getEntryAt(idx)).toString();
+                lastContents = sst.getItemAt(idx).getString();
             } catch (Exception e) {
-                // Handle exception
+                lastContents = "";
             }
         }
         
         if (name.equals("v") || name.equals("t")) { // Value or text
-            currentRow.add(lastContents);
+            // Only store if this column is in our config
+            if (!isFirstRow && columnIndexToName.containsKey(currentCol)) {
+                String columnName = columnIndexToName.get(currentCol);
+                columnData.get(columnName).add(lastContents);
+            }
         } else if (name.equals("row")) { // End of row
-            if (!isFirstRow) { // Skip header row if needed
-                allRows.add(new ArrayList<>(currentRow));
-            } else {
+            if (isFirstRow) {
                 isFirstRow = false;
             }
-            currentRow.clear();
+            currentCol = 0;
         }
     }
     
@@ -114,76 +99,56 @@ class SheetHandler extends DefaultHandler {
         lastContents += new String(ch, start, length);
     }
     
-    public List<List<String>> getRows() {
-        return allRows;
+    // Convert cell reference to column index (A=0, B=1, ..., Z=25, AA=26, etc.)
+    private int getColumnIndex(String cellRef) {
+        StringBuilder colString = new StringBuilder();
+        for (char c : cellRef.toCharArray()) {
+            if (Character.isLetter(c)) {
+                colString.append(c);
+            } else {
+                break;
+            }
+        }
+        
+        int index = 0;
+        for (int i = 0; i < colString.length(); i++) {
+            index = index * 26 + (colString.charAt(i) - 'A' + 1);
+        }
+        return index - 1; // Convert to 0-based index
+    }
+    
+    public Map<String, List<String>> getColumnData() {
+        return columnData;
     }
 }
 
-public class ExcelStreamingReader {
-    private static final int CHUNK_SIZE = 1000; // Adjust as needed
+public class ExcelColumnExtractor {
     
-    public static void main(String[] args) {
-        String filePath = "path/to/your/large-file.xlsx";
+    /**
+     * Extract specific columns from an Excel sheet
+     * 
+     * @param filePath Path to the Excel file
+     * @param sheetName Name of the sheet to read
+     * @param columnConfigs List of column configurations (name and index)
+     * @return Map where key is column name and value is list of values from that column
+     */
+    public static Map<String, List<String>> extractColumns(
+            String filePath, 
+            String sheetName, 
+            List<ColumnConfig> columnConfigs) throws Exception {
         
-        try {
-            processExcelFile(filePath);
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-    }
-    
-    public static void processExcelFile(String filePath) throws Exception {
         OPCPackage pkg = OPCPackage.open(filePath);
         XSSFReader reader = new XSSFReader(pkg);
         SharedStringsTable sst = reader.getSharedStringsTable();
         
-        // Get sheet names and their IDs
-        Map<String, String> sheetMap = getSheetMap(reader);
-        
-        int abcCount = 0;
-        int xyzCount = 0;
-        
-        // Process ABC sheet
-        if (sheetMap.containsKey("ABC")) {
-            System.out.println("Processing ABC sheet...");
-            abcCount = processSheet(reader, sst, sheetMap.get("ABC"), "ABC");
-        } else {
-            System.out.println("ABC sheet not found!");
+        // Find the sheet
+        String sheetId = findSheet(reader, sheetName);
+        if (sheetId == null) {
+            pkg.close();
+            throw new IllegalArgumentException("Sheet '" + sheetName + "' not found!");
         }
         
-        // Process XYZ sheet
-        if (sheetMap.containsKey("XYZ")) {
-            System.out.println("\nProcessing XYZ sheet...");
-            xyzCount = processSheet(reader, sst, sheetMap.get("XYZ"), "XYZ");
-        } else {
-            System.out.println("XYZ sheet not found!");
-        }
-        
-        pkg.close();
-        
-        // Print final counts
-        System.out.println("\n=== Processing Complete ===");
-        System.out.println("ABC Sheet Total Rows: " + abcCount);
-        System.out.println("XYZ Sheet Total Rows: " + xyzCount);
-        System.out.println("Total Rows Processed: " + (abcCount + xyzCount));
-    }
-    
-    private static Map<String, String> getSheetMap(XSSFReader reader) throws Exception {
-        Map<String, String> sheetMap = new HashMap<>();
-        XSSFReader.SheetIterator iter = (XSSFReader.SheetIterator) reader.getSheetsData();
-        
-        while (iter.hasNext()) {
-            InputStream stream = iter.next();
-            String sheetName = iter.getSheetName();
-            sheetMap.put(sheetName, iter.getSheetPart().getPartName().getName());
-            stream.close();
-        }
-        
-        return sheetMap;
-    }
-    
-    private static int processSheet(XSSFReader reader, SharedStringsTable sst, 
-                                     String sheetId, String sheetName) throws Exception {
+        // Parse the sheet
         InputStream sheet = reader.getSheet(sheetId);
         InputSource sheetSource = new InputSource(sheet);
         
@@ -191,59 +156,114 @@ public class ExcelStreamingReader {
         SAXParser saxParser = saxFactory.newSAXParser();
         XMLReader xmlReader = saxParser.getXMLReader();
         
-        SheetHandler handler = new SheetHandler(sst);
+        ColumnExtractionHandler handler = new ColumnExtractionHandler(sst, columnConfigs);
         xmlReader.setContentHandler(handler);
         xmlReader.parse(sheetSource);
         
-        List<List<String>> rows = handler.getRows();
         sheet.close();
+        pkg.close();
         
-        // Process rows in chunks
-        int totalRows = rows.size();
-        int processedRows = 0;
+        return handler.getColumnData();
+    }
+    
+    /**
+     * Convenience method for extracting two columns (like key1 and key2)
+     */
+    public static Map<String, List<String>> extractTwoColumns(
+            String filePath,
+            String sheetName,
+            String column1Name,
+            int column1Index,
+            String column2Name,
+            int column2Index) throws Exception {
         
-        for (int i = 0; i < rows.size(); i += CHUNK_SIZE) {
-            int end = Math.min(i + CHUNK_SIZE, rows.size());
-            List<List<String>> chunk = rows.subList(i, end);
+        List<ColumnConfig> configs = Arrays.asList(
+            new ColumnConfig(column1Name, column1Index),
+            new ColumnConfig(column2Name, column2Index)
+        );
+        
+        return extractColumns(filePath, sheetName, configs);
+    }
+    
+    private static String findSheet(XSSFReader reader, String sheetName) throws Exception {
+        XSSFReader.SheetIterator iter = (XSSFReader.SheetIterator) reader.getSheetsData();
+        
+        while (iter.hasNext()) {
+            InputStream stream = iter.next();
+            String name = iter.getSheetName();
+            String partName = iter.getSheetPart().getPartName().getName();
+            stream.close();
             
-            if (sheetName.equals("ABC")) {
-                List<ABCData> abcList = new ArrayList<>();
-                for (List<String> row : chunk) {
-                    abcList.add(new ABCData(row));
-                }
-                processABCData(abcList);
-                processedRows += abcList.size();
-            } else if (sheetName.equals("XYZ")) {
-                List<XYZData> xyzList = new ArrayList<>();
-                for (List<String> row : chunk) {
-                    xyzList.add(new XYZData(row));
-                }
-                processXYZData(xyzList);
-                processedRows += xyzList.size();
+            if (name.equals(sheetName)) {
+                return partName;
+            }
+        }
+        
+        return null;
+    }
+    
+    // Example usage
+    public static void main(String[] args) {
+        try {
+            String filePath = "path/to/your/file.xlsx";
+            String sheetName = "ABC";
+            
+            // Example 1: Extract 2 columns (key1 at column 0, key2 at column 5)
+            System.out.println("=== Example 1: Extract 2 columns ===");
+            Map<String, List<String>> result = extractTwoColumns(
+                filePath, 
+                sheetName, 
+                "key1", 0,  // Column A (index 0)
+                "key2", 5   // Column F (index 5)
+            );
+            
+            System.out.println("key1 count: " + result.get("key1").size());
+            System.out.println("key2 count: " + result.get("key2").size());
+            System.out.println("\nFirst 5 values of key1:");
+            result.get("key1").stream().limit(5).forEach(System.out::println);
+            System.out.println("\nFirst 5 values of key2:");
+            result.get("key2").stream().limit(5).forEach(System.out::println);
+            
+            // Example 2: Extract multiple columns (flexible approach)
+            System.out.println("\n\n=== Example 2: Extract multiple columns ===");
+            List<ColumnConfig> configs = Arrays.asList(
+                new ColumnConfig("key1", 0),   // Column A
+                new ColumnConfig("key2", 5),   // Column F
+                new ColumnConfig("key3", 10),  // Column K
+                new ColumnConfig("key4", 15)   // Column P
+            );
+            
+            Map<String, List<String>> multiResult = extractColumns(
+                filePath, 
+                sheetName, 
+                configs
+            );
+            
+            System.out.println("Extracted columns:");
+            for (String key : multiResult.keySet()) {
+                System.out.println(key + ": " + multiResult.get(key).size() + " values");
             }
             
-            System.out.println("Processed " + processedRows + "/" + totalRows + " rows from " + sheetName);
+            // Example 3: Process the data
+            System.out.println("\n\n=== Example 3: Processing the data ===");
+            processData(result);
+            
+        } catch (Exception e) {
+            e.printStackTrace();
         }
+    }
+    
+    // Example processing function
+    private static void processData(Map<String, List<String>> data) {
+        List<String> key1Values = data.get("key1");
+        List<String> key2Values = data.get("key2");
         
-        return totalRows;
-    }
-    
-    // Function to process ABC data chunks
-    private static void processABCData(List<ABCData> dataList) {
-        System.out.println("\n--- Processing ABC Chunk (" + dataList.size() + " records) ---");
-        for (ABCData data : dataList) {
-            System.out.println(data);
-        }
-    }
-    
-    // Function to process XYZ data chunks
-    private static void processXYZData(List<XYZData> dataList) {
-        System.out.println("\n--- Processing XYZ Chunk (" + dataList.size() + " records) ---");
-        for (XYZData data : dataList.size() > 5 ? dataList.subList(0, 5) : dataList) {
-            System.out.println(data);
-        }
-        if (dataList.size() > 5) {
-            System.out.println("... (" + (dataList.size() - 5) + " more records)");
+        System.out.println("Processing " + key1Values.size() + " rows...");
+        
+        // You can now work with the lists as needed
+        for (int i = 0; i < Math.min(5, key1Values.size()); i++) {
+            System.out.println("Row " + (i+1) + ": key1=" + key1Values.get(i) + 
+                             ", key2=" + key2Values.get(i));
         }
     }
 }
